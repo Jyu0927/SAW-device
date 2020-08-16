@@ -1,4 +1,4 @@
-NanoVNA - Very tiny handheld Vector Network Analyzer
+NanoVNA - Very tiny handheld Vector Network Analyzer (EDITED)
 ==========================================================
 
 [![GitHub release](http://img.shields.io/github/release/ttrftech/NanoVNA.svg?style=flat)][release]
@@ -18,6 +18,8 @@ project aim to provide an RF gadget but useful instrument for
 enthusiast.
 
 This repository contains source of NanoVNA firmware.
+
+EDITED: This repo was edited most importantly to allow receiving and sending continuous signals from and to the NanoVNA (as the original repo only allows for analysis of one single segment of signal). Some small bugs found while connecting to a NanoVNA are fixed. Modifications were added to python files to allow continuously receiving signals on NanoVNA as well as displaying these signals. Data collection of signals are made easy to allow for real time adjustment as continuous heat map of signals can be displayed while collecting data. Python file for visualizing large scale of data is added. 
 
 ## Prepare ARM Cross Tools
 
