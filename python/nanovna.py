@@ -3,7 +3,10 @@ import serial
 import numpy as np
 import pylab as pl
 import struct
+import matplotlib.animation as animation
 from serial.tools import list_ports
+import time
+import pygame
 
 VID = 0x0483 #1155
 PID = 0x5740 #22336
@@ -24,7 +27,12 @@ class NanoVNA:
         self.serial = None
         self._frequencies = None
         self.points = 101
-        
+        self.phasedata = []
+        self.phasedata_calibrated = []
+        self.sweepcount = 0
+        self.time_capacity = 20
+        self.initialsweep = []
+
     @property
     def frequencies(self):
         return self._frequencies
@@ -48,10 +56,28 @@ class NanoVNA:
         self.serial.write(cmd.encode())
         self.serial.readline() # discard empty line
 
-    def set_sweep(self, start, stop):
+    def set_sweep(self, start, stop, nv):
         if start is not None:
+            #a new sweep comes in
+            #print("start")
+            self.sweepcount += 1
+            #print(self.sweepcount)
             self.send_command("sweep start %d\r" % start)
         if stop is not None:
+            s = nv.scan()
+            nv.fetch_frequencies()
+            s = nv.data(1)
+            nv.fetch_frequencies()
+            a = np.rad2deg(np.angle(s))
+            if self.sweepcount == 1:
+                #print("initial sweep set")
+                self.initialsweep = a
+                #print(a)
+            #print(np.subtract(a,self.sweepcount))
+            self.phasedata.append(a)
+            calibrated = np.subtract(a,self.initialsweep)
+            self.phasedata_calibrated.append(calibrated)
+            #print("stop")
             self.send_command("sweep stop %d\r" % stop)
 
     def set_frequency(self, freq):
@@ -224,6 +250,7 @@ class NanoVNA:
         pl.plot(self.frequencies, np.abs(x))
 
     def phase(self, x, unwrap=False):
+        pl.cla() #clearing the last graph before drawing the next one
         pl.grid(True)
         a = np.angle(x)
         if unwrap:
@@ -232,6 +259,30 @@ class NanoVNA:
             pl.ylim((-180,180))
         pl.xlim(self.frequencies[0], self.frequencies[-1])
         pl.plot(self.frequencies, np.rad2deg(a))
+
+    def spectrogram(self, x):
+        pl.grid(True)
+        a = np.angle(x)
+        a = np.rad2deg(a)
+        # Fixing random state for reproducibility
+        np.random.seed(19680801)
+
+        dt = 0.0005
+        #t = np.arange(0.0, 20.0, dt)
+
+        NFFT = 101  # the length of the windowing segments
+        Fs = int(1.0 / dt)  # the sampling frequency
+
+        #fig, (ax1, ax2) = pl.subplots(nrows=2)
+        fig, (ax2) = pl.subplots(nrows=1)
+        #ax1.plot(t, a)
+        Pxx, freqs, bins, im = ax2.specgram(a, NFFT=NFFT, Fs=Fs, noverlap=1)
+        # The `specgram` method returns 4 objects. They are:
+        # - Pxx: the periodogram
+        # - freqs: the frequency vector
+        # - bins: the centers of the time bins
+        # - im: the matplotlib.image.AxesImage instance representing the data in the plot
+        pl.show()
 
     def delay(self, x):
         pl.grid(True)
@@ -288,6 +339,101 @@ class NanoVNA:
         n = self.skrf_network(x)
         n.plot_s_smith()
         return n
+    
+    def continuousheatmap(self, x, opt, nv):
+        fig = pl.figure()
+        #pl.ion()
+        pl.ylabel('Frequency (e6)')
+        pl.xlabel('Time')
+        pl.xticks([])
+        pl.pcolor((np.array(self.phasedata_calibrated)).transpose(),cmap='RdBu',vmin=-20, vmax=20)
+        pl.colorbar()
+        
+    
+        def plot(i):
+            #print(self.sweepcount)
+            if self.sweepcount >= self.time_capacity:
+                low = self.sweepcount - self.time_capacity
+            else:
+                low = 0
+            content = np.array(self.phasedata_calibrated[low:self.sweepcount])
+            heatmap = pl.pcolor(content.transpose(),cmap='RdBu',vmin=-20, vmax=20)
+            pl.ylabel('Frequency (e6)')
+            pl.xlabel('Time')
+            pl.xticks([])
+            if opt.start or opt.stop:
+                nv.set_sweep(opt.start, opt.stop, nv)
+        #cbar.set_label('Color Intensity')
+        ani = animation.FuncAnimation(fig, plot, interval=1)
+        pl.show()
+        #pl.show()
+        #pl.show()   add this line here if you are only running this file
+
+    def savedata(self):
+        fig = pl.figure()
+        #pl.ion()
+        pl.ylabel('Frequency (e6)')
+        pl.xlabel('Time')
+        pl.xticks([])
+        pl.pcolor((np.array(self.phasedata_calibrated)).transpose(),cmap='RdBu',vmin=-20, vmax=20)
+        pl.colorbar()
+        
+    
+        def plot(i):
+            #print(self.sweepcount)
+            if self.sweepcount >= self.time_capacity:
+                low = self.sweepcount - self.time_capacity
+            else:
+                low = 0
+            content = np.array(self.phasedata_calibrated[low:self.sweepcount])
+            heatmap = pl.pcolor(content.transpose(),cmap='RdBu',vmin=-20, vmax=20)
+            pl.ylabel('Frequency (e6)')
+            pl.xlabel('Time')
+            pl.xticks([])
+            if opt.start or opt.stop:
+                nv.set_sweep(opt.start, opt.stop, nv)
+        #cbar.set_label('Color Intensity')
+        ani = animation.FuncAnimation(fig, plot, interval=1)
+        pl.show(block = False)
+        pygame.init()
+        screen = pygame.display.set_mode((400, 400))
+        start = 0
+        val = False
+        while True:
+            if (self.sweepcount - start == 5) & val:
+                print("put the liquid now")
+            if (self.sweepcount - start == 24) & val:
+                print("start is ", start)
+                print("end is ", self.sweepcount)
+                data = np.asarray(self.phasedata[start:self.sweepcount + 1])
+                np.savetxt(label + "_0720.csv", data, delimiter= ",")
+                print("data is saved")
+                start = 0
+                val = False
+            for event in pygame.event.get():
+                if event.type == pygame.KEYDOWN:
+                    #change the baseline to current local baseline by pressing b
+                    if event.key == pygame.K_b:
+                        self.initialsweep = self.phasedata[-1]
+                        
+                    if event.key == pygame.K_s:
+                        label = input("name of the event you are recording: ")
+                        print("starting to record", label)
+                        start = self.sweepcount
+                        val = True
+                    #elif event.key == pygame.K_e:
+                        #data = np.asarray(self.phasedata[start:self.sweepcount + 1])
+                        #np.savetxt(label + "_0612.csv", data, delimiter= ",")
+                        #print("data is saved")
+                    elif event.key == pygame.K_q:
+                        exit(0)
+        #while self.sweepcount < 100:
+            #continue
+        #print("start saving data")
+        #data = np.asarray(self.phasedata[0:100])
+        #np.savetxt("plastic_0512.csv", data, delimiter = ",")
+        #print("data is saved")
+        #return  0
 
 def plot_sample0(samp):
     N = min(len(samp), 256)
@@ -340,6 +486,12 @@ if __name__ == '__main__':
     parser.add_option("-H", "--phase", dest="phase",
                       action="store_true", default=False,
                       help="plot phase", metavar="PHASE")
+    parser.add_option("-M", "--spectrogram", dest="spectrogram",
+                      action="store_true", default=False,
+                      help="plot spectrogram",metavar="SPECTROGRAM")
+    parser.add_option("-z", "--continuousheatmap", dest="continuousheatmap",
+                      action="store_true", default=False,
+                      help="plot continuous heat map",metavar="CONTINUOUSHEATMAP")
     parser.add_option("-U", "--unwrapphase", dest="unwrapphase",
                       action="store_true", default=False,
                       help="plot unwrapped phase", metavar="UNWRAPPHASE")
@@ -371,6 +523,9 @@ if __name__ == '__main__':
                       help="send raw command", metavar="COMMAND")
     parser.add_option("-o", dest="save",
                       help="write touch stone file", metavar="SAVE")
+    parser.add_option("-V", "--savedata", dest="savedata",
+                      action="store_true", default=False,
+                      help="save data into csv file",metavar="SAVEDATA")
     (opt, args) = parser.parse_args()
 
     nv = NanoVNA(opt.device or getport())
@@ -400,30 +555,48 @@ if __name__ == '__main__':
         pl.show()
         exit(0)
     if opt.start or opt.stop or opt.points:
+        print("something new here")
         nv.set_frequencies(opt.start, opt.stop, opt.points)
-    plot = opt.phase or opt.plot or opt.vswr or opt.delay or opt.groupdelay or opt.smith or opt.unwrapphase or opt.polar or opt.tdr
-    if plot or opt.save:
+    plot = opt.phase or opt.plot or opt.vswr or opt.delay or opt.groupdelay or opt.smith or opt.unwrapphase or opt.polar or opt.tdr or opt.spectrogram or opt.continuousheatmap
+    if plot or opt.save or opt.savedata:
         p = int(opt.port) if opt.port else 0
         if opt.scan or opt.points > 101:
             s = nv.scan()
             s = s[p]
+            print("hello")
         else:
             if opt.start or opt.stop:
-                nv.set_sweep(opt.start, opt.stop)
+                nv.set_sweep(opt.start, opt.stop, nv)
             nv.fetch_frequencies()
-            s = nv.data(p)
+            #s = nv.data(p) line changed
+            s = nv.data(1)
             nv.fetch_frequencies()
     if opt.save:
         n = nv.skrf_network(s)
         n.write_touchstone(opt.save)
+    if opt.savedata:
+        nv.savedata()
     if opt.smith:
         nv.smith(s)
     if opt.polar:
         nv.polar(s)
     if opt.plot:
         nv.logmag(s)
+    if opt.spectrogram:
+        nv.spectrogram(s)
+    if opt.continuousheatmap:
+        nv.continuousheatmap(s, opt, nv)
     if opt.phase:
-        nv.phase(s)
+            nv.phase(s)
+            while 1:
+                pl.pause(0.1)
+                s = nv.scan()
+                if opt.start or opt.stop:
+                    nv.set_sweep(opt.start, opt.stop, nv)
+                nv.fetch_frequencies()
+                s = nv.data(1)
+                nv.fetch_frequencies()
+                nv.phase(s)
     if opt.unwrapphase:
         nv.phase(s, unwrap=True)
     if opt.delay:
